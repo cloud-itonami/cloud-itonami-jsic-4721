@@ -80,6 +80,74 @@
   (testing "the physical-discipline checks are optional -- absent fields never hold"
     (is (= :pass (:status (governor/check {:kind :log-inbound-shipment}))))))
 
+;; ── cross-actor handoff (isic-1075 -> jsic-4721) ──
+
+(def ^:private chilled-poultry-handoff
+  "A handoff record matching cloud-itonami-isic-1075's :meal/cook-chill-
+  poultry cold-storage safety margin (0.0C-3.0C)."
+  {:handoff/id "h-1"
+   :handoff/source-actor "cloud-itonami-isic-1075"
+   :handoff/batch-id "batch-001"
+   :handoff/product-type-id :meal/cook-chill-poultry
+   :handoff/cold-chain-temp-min-c 0.0
+   :handoff/cold-chain-temp-max-c 3.0
+   :handoff/quantity-kg 120.5
+   :handoff/dispatched-at-iso "2026-07-17T00:00:00Z"})
+
+(deftest inbound-shipment-handoff-incompatible-with-commodity-class-holds
+  (testing "a chilled handoff assigned to an f4-deep-frozen lot holds (temperature-tier mismatch)"
+    (let [r (governor/check {:kind :log-inbound-shipment
+                             :lot/commodity-class :coldchain/f4-deep-frozen
+                             :handoff chilled-poultry-handoff})]
+      (is (= :hold (:status r)))
+      (is (some #(re-find #"handoff" %) (:reasons r))))))
+
+(deftest inbound-shipment-handoff-compatible-with-commodity-class-passes
+  (testing "a chilled handoff assigned to a c3-chilled lot passes"
+    (is (= :pass (:status (governor/check {:kind :log-inbound-shipment
+                                           :lot/commodity-class :coldchain/c3-chilled
+                                           :handoff chilled-poultry-handoff}))))))
+
+(deftest outbound-shipment-handoff-incompatible-with-commodity-class-holds
+  (testing "the same handoff-compatibility check also applies to outbound shipments"
+    (let [r (governor/check {:kind :log-outbound-shipment
+                             :lot/commodity-class :coldchain/f4-deep-frozen
+                             :handoff chilled-poultry-handoff})]
+      (is (= :hold (:status r)))
+      (is (some #(re-find #"handoff" %) (:reasons r))))))
+
+(deftest lot-proposal-without-handoff-passes
+  (testing "a proposal without a :handoff record is not held on this basis (backward compatible)"
+    (is (= :pass (:status (governor/check {:kind :log-inbound-shipment
+                                           :lot/commodity-class :coldchain/c3-chilled
+                                           :lot/storage-temp-c 3.0}))))))
+
+;; ── inbound quantity-kg wired into capacity-concentration-limit ──
+
+(deftest inbound-shipment-quantity-kg-exceeds-concentration-limit-holds
+  (testing "a received quantity-kg above 25% of total warehouse capacity holds"
+    (let [r (governor/check {:kind :log-inbound-shipment
+                             :lot/quantity-kg 300
+                             :capacity/total-units 1000})]
+      (is (= :hold (:status r)))
+      (is (some #(re-find #"concentration" %) (:reasons r))))))
+
+(deftest inbound-shipment-quantity-kg-within-concentration-limit-passes
+  (is (= :pass (:status (governor/check {:kind :log-inbound-shipment
+                                         :lot/quantity-kg 100
+                                         :capacity/total-units 1000})))))
+
+(deftest inbound-shipment-quantity-kg-missing-total-units-does-not-hold
+  (testing "quantity-kg alone (no :capacity/total-units) is not held on this basis"
+    (is (= :pass (:status (governor/check {:kind :log-inbound-shipment
+                                           :lot/quantity-kg 900}))))))
+
+(deftest outbound-shipment-quantity-kg-is-not-checked-against-concentration-limit
+  (testing "the inbound-only concentration wiring does not apply to outbound shipments"
+    (is (= :pass (:status (governor/check {:kind :log-outbound-shipment
+                                           :lot/quantity-kg 900
+                                           :capacity/total-units 1000}))))))
+
 ;; ── censor ──
 
 (deftest censor-buckets-every-proposal-exactly-once

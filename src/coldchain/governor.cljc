@@ -61,7 +61,22 @@
   cause #3 (Nichirei Logistics Group's ~5,000-client
   single-point-of-failure concentration) -- this actor structurally
   caps how much of ITS OWN physical capacity any one client can come
-  to depend on.
+  to depend on. This same kernel is also wired directly into
+  `:log-inbound-shipment` (see `inbound-concentration-violations`) so
+  an ACTUALLY received quantity, not just a declared `:capacity/
+  allocate` number, is checked against the limit.
+
+  ── Cross-actor handoff (isic-1075 -> jsic-4721) ──
+
+  `:log-inbound-shipment`/`:log-outbound-shipment` proposals MAY carry
+  a `:handoff` record -- the wire shape cloud-itonami-isic-1075's own
+  `:coordinate-shipment` proposals populate (superproject
+  ADR-2607177600). This actor independently verifies its own half of
+  that contract (no shared code with isic-1075, just the same field
+  names): the handoff's declared cold-chain-temp-min-c/max-c window
+  must overlap the lot's assigned commodity class's storage band (see
+  `lot-physical-violations` and `coldchain.facts/handoff-compatible-
+  with-commodity-class?`).
 
   Composition shape (multimethod `rule` dispatching on `:kind`, closed
   allowlist, `{:status :pass|:hold :reasons [...]}`) mirrors
@@ -90,6 +105,9 @@
 (def reason-power-outage-exceeds-max
   "reefer/compressor power-outage duration exceeded the commodity class's maximum tolerable outage")
 
+(def reason-handoff-cold-chain-window-incompatible-with-assigned-commodity-class
+  "handoff's declared cold-chain-temp-min-c/max-c window does not overlap the storage lot's assigned commodity class's safe storage-temperature band (temperature-tier mismatch, e.g. a chilled handoff assigned to a deep-frozen bin)")
+
 (defmulti ^:private rule
   "One proposal (+ registry context) -> seq of hold-reason strings
   (empty = no kind-specific objection). Same dispatch shape as
@@ -114,11 +132,22 @@
   (coldchain.facts/commodity-classes). Both fields are optional on the
   proposal -- a proposal that doesn't carry them is not held on this
   basis (this actor's `:maturity :blueprint` scope doesn't require
-  telemetry to already be wired everywhere)."
+  telemetry to already be wired everywhere).
+
+  Also, when the proposal carries a `:handoff` record (the
+  isic-1075<->jsic-4721 cross-actor wire shape, see
+  `coldchain.facts`'s \"Cross-Actor Handoff\" section), INDEPENDENTLY
+  verify via `facts/handoff-compatible-with-commodity-class?` that the
+  handoff's declared cold-chain-temp-min-c/max-c window is not a
+  temperature-tier mismatch against the lot's assigned commodity
+  class -- optional on the same basis as the other two checks."
   [proposal]
   (let [actual-temp (:lot/storage-temp-c proposal)
         outage-minutes (:lot/power-outage-minutes proposal)
-        commodity (facts/commodity-class-by-id (:lot/commodity-class proposal))]
+        commodity (facts/commodity-class-by-id (:lot/commodity-class proposal))
+        handoff (:handoff proposal)
+        handoff-min (:handoff/cold-chain-temp-min-c handoff)
+        handoff-max (:handoff/cold-chain-temp-max-c handoff)]
     (cond-> []
       (and commodity actual-temp
            (registry/storage-temp-out-of-range?
@@ -128,9 +157,35 @@
       (and commodity outage-minutes
            (registry/power-outage-exceeds-max?
             outage-minutes (:max-power-outage-minutes commodity)))
-      (conj reason-power-outage-exceeds-max))))
+      (conj reason-power-outage-exceeds-max)
 
-(defmethod rule :log-inbound-shipment [_ proposal] (lot-physical-violations proposal))
+      (and commodity (map? handoff) (some? handoff-min) (some? handoff-max)
+           (not (facts/handoff-compatible-with-commodity-class? handoff-min handoff-max commodity)))
+      (conj reason-handoff-cold-chain-window-incompatible-with-assigned-commodity-class))))
+
+(defn- inbound-concentration-violations
+  "Direct, minimal wiring of an ACTUAL received quantity into the
+  existing capacity-concentration-limit kernel
+  (coldchain.kernels.concentration-verdict), rather than only checking
+  the DECLARED allocation at `:capacity/allocate` time. `:capacity/
+  allocate`'s own check validates a proposed allocation number; this
+  reuses the exact same kernel functions/reason/default limit --
+  no new kernel logic, only new wiring -- to also validate the
+  physical fact of what was actually received on THIS inbound
+  shipment, when the caller supplies both `:lot/quantity-kg` (the
+  received amount) and `:capacity/total-units` (this warehouse's total
+  capacity, same unit convention the caller uses for its own
+  `:capacity/allocate` proposals). Optional, same discipline as
+  `lot-physical-violations`: a proposal missing either field is not
+  held on this basis."
+  [proposal]
+  (let [ratio (cv/concentration-ratio (:lot/quantity-kg proposal) (:capacity/total-units proposal))]
+    (if (= 1 (cv/concentration-limit-exceeded? ratio cv/default-concentration-limit))
+      [cv/reason-concentration-limit-exceeded]
+      [])))
+
+(defmethod rule :log-inbound-shipment [_ proposal]
+  (into (lot-physical-violations proposal) (inbound-concentration-violations proposal)))
 (defmethod rule :log-outbound-shipment [_ proposal] (lot-physical-violations proposal))
 
 (defn check
