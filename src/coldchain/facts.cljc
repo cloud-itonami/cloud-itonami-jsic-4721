@@ -51,3 +51,51 @@
 
 (defn jurisdiction-by-id [id]
   (get jurisdictions id))
+
+;; ─────────────── Cross-Actor Handoff (isic-1075 -> jsic-4721) ───────────────
+;;
+;; An inbound (or outbound) lot proposal MAY carry a `:handoff` record --
+;; the same wire shape documented in cloud-itonami-isic-1075's
+;; `mealops.facts` and superproject ADR-2607177600. This actor validates
+;; its own half of that contract independently (no shared code, no
+;; shared store): does the handoff's declared cold-chain-temp-min-c/
+;; max-c window even OVERLAP the commodity class this lot has been
+;; assigned to?
+;;
+;;   {:handoff/id "..."
+;;    :handoff/source-actor "cloud-itonami-isic-1075"
+;;    :handoff/batch-id "..."
+;;    :handoff/product-type-id :meal/cook-chill-poultry
+;;    :handoff/cold-chain-temp-min-c 0.0
+;;    :handoff/cold-chain-temp-max-c 3.0
+;;    :handoff/quantity-kg 120.5
+;;    :handoff/dispatched-at-iso "..."}
+
+(defn handoff-compatible-with-commodity-class?
+  "Positive-sense convenience predicate: does the declared handoff's
+  cold-chain-temp-min-c/max-c window OVERLAP `commodity`'s own
+  storage-temp-min-c/max-c band at all? Detects a temperature-tier
+  mismatch between what a handed-off batch requires and the storage
+  class it has been assigned to -- e.g. a 0C-3C chilled product
+  assigned to an F4 deep-frozen (-30C to -20C) bin, where the two
+  bands don't overlap at all.
+
+  Deliberately OVERLAP rather than a strict subset check in either
+  direction: a commodity class describes a whole STORAGE ROOM's
+  operating band, not one specific product's declared safety margin
+  (that subset check already lives on the isic-1075 side, comparing a
+  handoff's window against a PRODUCT TYPE's own proven-safe range --
+  see `mealops.facts/handoff-window-within-product-safety-margin?`).
+  Requiring the room's whole band to be a subset of the product's
+  narrower window (or vice versa) would reject nearly every real
+  assignment; the physically meaningful question on THIS side of the
+  handoff is simply whether the assigned room can ever actually be at
+  a temperature the handoff requires."
+  [handoff-min-c handoff-max-c commodity]
+  (boolean
+   (and (some? commodity)
+        (some? handoff-min-c)
+        (some? handoff-max-c)
+        (<= handoff-min-c handoff-max-c)
+        (<= handoff-min-c (:storage-temp-max-c commodity))
+        (<= (:storage-temp-min-c commodity) handoff-max-c))))
