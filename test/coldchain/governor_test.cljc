@@ -148,6 +148,64 @@
                                            :lot/quantity-kg 900
                                            :capacity/total-units 1000}))))))
 
+;; ── cross-actor grid-outage reference (isic-3510 -> jsic-4721) ──
+;;
+;; SOFT escalation, not a hard hold -- mirrors cloud-itonami-isic-1075's
+;; :supplier-not-verified soft-escalation precedent. See
+;; coldchain.governor/grid-outage-duration-mismatch-escalations.
+
+(deftest inbound-shipment-grid-outage-duration-mismatch-escalates-not-holds
+  (testing "a self-report far outside the grid-operator record's duration escalates, does not hold"
+    (let [r (governor/check {:kind :log-inbound-shipment
+                             :lot/commodity-class :coldchain/f4-deep-frozen
+                             :lot/power-outage-minutes 60
+                             :grid-outage/source-actor "cloud-itonami-isic-3510"
+                             :grid-outage/event-id "outage-1"
+                             :grid-outage/duration-minutes 200})]
+      (is (= :escalate (:status r)))
+      (is (some #(re-find #"grid-outage" %) (:escalations r)))
+      (is (not= :hold (:status r))))))
+
+(deftest outbound-shipment-grid-outage-duration-mismatch-also-escalates
+  (testing "the same cross-check also applies to outbound shipments"
+    (let [r (governor/check {:kind :log-outbound-shipment
+                             :lot/power-outage-minutes 10
+                             :grid-outage/source-actor "cloud-itonami-isic-3510"
+                             :grid-outage/event-id "outage-2"
+                             :grid-outage/duration-minutes 60})]
+      (is (= :escalate (:status r)))
+      (is (seq (:escalations r))))))
+
+(deftest inbound-shipment-grid-outage-duration-within-tolerance-passes
+  (testing "a self-report within tolerance of the grid-operator record passes cleanly"
+    (is (= :pass (:status (governor/check {:kind :log-inbound-shipment
+                                           :lot/power-outage-minutes 65
+                                           :grid-outage/source-actor "cloud-itonami-isic-3510"
+                                           :grid-outage/event-id "outage-1"
+                                           :grid-outage/duration-minutes 60}))))))
+
+(deftest lot-proposal-without-grid-outage-fields-passes
+  (testing "the grid-outage cross-check is optional -- absent reference fields never escalate (backward compatible, isic-3510 not required)"
+    (is (= :pass (:status (governor/check {:kind :log-inbound-shipment
+                                           :lot/commodity-class :coldchain/f4-deep-frozen
+                                           :lot/power-outage-minutes 60}))))
+    (testing "partial reference fields (missing :grid-outage/event-id) also never escalate"
+      (is (= :pass (:status (governor/check {:kind :log-inbound-shipment
+                                             :lot/power-outage-minutes 200
+                                             :grid-outage/source-actor "cloud-itonami-isic-3510"
+                                             :grid-outage/duration-minutes 60})))))))
+
+(deftest grid-outage-duration-mismatch-never-overrides-a-hard-hold
+  (testing "a proposal that ALSO hard-holds on its own physical checks stays :hold, not :escalate"
+    (let [r (governor/check {:kind :log-inbound-shipment
+                             :lot/commodity-class :coldchain/c3-chilled
+                             :lot/storage-temp-c 30.0 ;; out of range -> hard hold
+                             :lot/power-outage-minutes 200
+                             :grid-outage/source-actor "cloud-itonami-isic-3510"
+                             :grid-outage/event-id "outage-1"
+                             :grid-outage/duration-minutes 60})]
+      (is (= :hold (:status r))))))
+
 ;; ── censor ──
 
 (deftest censor-buckets-every-proposal-exactly-once
@@ -157,3 +215,16 @@
                           {:kind :control-reefer-compressor}])]
     (is (= 1 (count approved)))
     (is (= 2 (count held)))))
+
+(deftest censor-escalated-bucket-for-grid-outage-mismatch
+  (let [{:keys [approved held escalated]}
+        (governor/censor [{:kind :log-inbound-shipment
+                           :lot/power-outage-minutes 200
+                           :grid-outage/source-actor "cloud-itonami-isic-3510"
+                           :grid-outage/event-id "outage-1"
+                           :grid-outage/duration-minutes 60}
+                          {:kind :capacity/allocate :capacity/allocated-units 100 :capacity/total-units 1000}])]
+    (is (= 1 (count escalated)))
+    (is (= 1 (count approved)))
+    (is (= 0 (count held)))
+    (is (some #(re-find #"grid-outage" %) (:escalations (first escalated))))))

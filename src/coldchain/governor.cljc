@@ -78,8 +78,38 @@
   `lot-physical-violations` and `coldchain.facts/handoff-compatible-
   with-commodity-class?`).
 
+  ── Cross-actor grid-outage reference (isic-3510 -> jsic-4721) ──
+
+  `:log-inbound-shipment`/`:log-outbound-shipment` proposals MAY ALSO
+  carry three flat reference fields -- `:grid-outage/source-actor`,
+  `:grid-outage/event-id`, `:grid-outage/duration-minutes` -- copied
+  from a committed outage-event record published by an upstream
+  grid-transmission-operator actor (e.g. cloud-itonami-isic-3510's
+  `grid.facts`/`grid.governor`, see superproject ADR-2608510000 for
+  the full shared shape). Same asymmetric-optional, no-shared-code
+  design as the isic-1075 handoff above, but a DIFFERENT wire shape
+  (three flat top-level keys here, vs. one nested `:handoff` map for
+  the isic-1075 contract) and a DIFFERENT enforcement tier: a mismatch
+  between this actor's own self-reported `:lot/power-outage-minutes`
+  and the referenced grid-operator record's `:grid-outage/duration-
+  minutes` is a SOFT escalation (`:grid-outage-duration-mismatch`,
+  see `grid-outage-duration-mismatch-escalations` below), never a hard
+  hold -- mirroring cloud-itonami-isic-1075's own `:supplier-not-
+  verified` soft-escalation precedent (mealops.governor), not this
+  actor's `lot-physical-violations` hard-hold checks. A self-report
+  disagreeing with an independent grid-operator record is real
+  cross-actor traceability risk, but it is not proof either side is
+  wrong (clock skew, rounding, a partial/preliminary grid-side record,
+  etc.) -- unlike a physically-impossible storage-temperature
+  excursion, it is not grounds to unconditionally refuse the
+  shipment-logging proposal on its own; it always routes to human
+  review instead. Like this actor's `:handoff` cross-check, this actor
+  runs standalone and works with zero, one, or many independent grid
+  operators; isic-3510 is entirely optional and this actor has no code
+  path that depends on it.
+
   Composition shape (multimethod `rule` dispatching on `:kind`, closed
-  allowlist, `{:status :pass|:hold :reasons [...]}`) mirrors
+  allowlist, `{:status :pass|:hold|:escalate :reasons [...]}`) mirrors
   cloud-itonami.security-governor's own shape -- the two governors
   look alike by design even though they don't call each other."
   (:require [coldchain.kernels.concentration-verdict :as cv]
@@ -87,6 +117,7 @@
             [coldchain.registry :as registry]))
 
 (defn- hold [reasons] {:status :hold :reasons (vec reasons)})
+(defn- escalate [escalations] {:status :escalate :escalations (vec escalations)})
 (def ^:private pass {:status :pass})
 
 (def allowed-kinds
@@ -107,6 +138,9 @@
 
 (def reason-handoff-cold-chain-window-incompatible-with-assigned-commodity-class
   "handoff's declared cold-chain-temp-min-c/max-c window does not overlap the storage lot's assigned commodity class's safe storage-temperature band (temperature-tier mismatch, e.g. a chilled handoff assigned to a deep-frozen bin)")
+
+(def reason-grid-outage-duration-mismatch
+  "self-reported :lot/power-outage-minutes disagrees (beyond registry/default-grid-outage-tolerance-minutes) with the independently reported :grid-outage/duration-minutes from the referenced grid-transmission-operator outage event -- SOFT escalation to a human, not a hard hold (mirrors cloud-itonami-isic-1075's :supplier-not-verified soft-escalation pattern)")
 
 (defmulti ^:private rule
   "One proposal (+ registry context) -> seq of hold-reason strings
@@ -163,6 +197,49 @@
            (not (facts/handoff-compatible-with-commodity-class? handoff-min handoff-max commodity)))
       (conj reason-handoff-cold-chain-window-incompatible-with-assigned-commodity-class))))
 
+(defn- grid-outage-duration-mismatch-escalations
+  "SOFT escalation, never a hard hold -- colocated here with `lot-
+  physical-violations`'s existing self-reported power-outage check
+  (`reason-power-outage-exceeds-max`, above) for the same
+  `:log-inbound-shipment`/`:log-outbound-shipment` proposals, but kept
+  structurally INDEPENDENT of that hard-violations vector: this actor
+  runs fully standalone and isic-3510 is entirely OPTIONAL (same
+  asymmetric-optional design as the isic-1075 `:handoff` record, see
+  this ns's own docstring's \"Cross-actor grid-outage reference\"
+  section), and disagreeing with an unverified self-report is a
+  cross-actor traceability concern -- not grounds to unconditionally
+  block the shipment-logging proposal on its own, same reasoning as
+  cloud-itonami-isic-1075's `mealops.governor/supplier-not-verified-
+  escalation`.
+
+  Only evaluated when the proposal carries ALL of `:grid-outage/
+  source-actor`, `:grid-outage/event-id`, `:grid-outage/duration-
+  minutes` (the cloud-itonami-isic-3510 outage-event reference) AND
+  its own self-reported `:lot/power-outage-minutes` -- a proposal
+  missing any of these four fields is not escalated on this basis
+  (asymmetric-optional, same discipline as every check in
+  `lot-physical-violations`)."
+  [proposal]
+  (let [self-reported (:lot/power-outage-minutes proposal)
+        grid-source (:grid-outage/source-actor proposal)
+        grid-event (:grid-outage/event-id proposal)
+        grid-minutes (:grid-outage/duration-minutes proposal)]
+    (when (and (some? self-reported) (some? grid-source) (some? grid-event) (some? grid-minutes)
+               (registry/grid-outage-duration-mismatch?
+                self-reported grid-minutes registry/default-grid-outage-tolerance-minutes))
+      [reason-grid-outage-duration-mismatch])))
+
+(defn- soft-escalations
+  "Kind-specific SOFT signals -- never a hold, but force `:status
+  :escalate` (human sign-off) even when the hard checks in `rule` are
+  clean. Currently only `grid-outage-duration-mismatch-escalations`
+  for `:log-inbound-shipment`/`:log-outbound-shipment`."
+  [proposal]
+  (case (:kind proposal)
+    (:log-inbound-shipment :log-outbound-shipment)
+    (grid-outage-duration-mismatch-escalations proposal)
+    []))
+
 (defn- inbound-concentration-violations
   "Direct, minimal wiring of an ACTUAL received quantity into the
   existing capacity-concentration-limit kernel
@@ -189,10 +266,20 @@
 (defmethod rule :log-outbound-shipment [_ proposal] (lot-physical-violations proposal))
 
 (defn check
-  "One proposal -> {:status :pass} | {:status :hold :reasons [...]}.
+  "One proposal -> {:status :pass} | {:status :hold :reasons [...]}
+  | {:status :escalate :escalations [...]}.
   `registry` is optional context (default {}), forwarded to `rule`
   for parity with cloud-itonami.security-governor's shape even though
-  no rule here currently reads it."
+  no rule here currently reads it.
+
+  `:escalate` is a strictly weaker signal than `:hold`: it is only
+  ever returned when `reasons` (the hard-violation vector) is empty --
+  a hard hold always wins. Existing callers that only ever look for
+  `:hold` vs. everything-else (this actor's `:maturity :blueprint`
+  scope so far never had a third status) see no behaviour change for
+  any proposal that doesn't carry the optional grid-outage reference
+  fields, since `escalations` is empty for those and this falls
+  through to `pass` exactly as before."
   ([proposal] (check {} proposal))
   ([registry proposal]
    (let [kind (:kind proposal)
@@ -200,19 +287,30 @@
          kind-reasons (rule registry proposal)
          reasons (-> []
                      (into allowlist-reasons)
-                     (into kind-reasons))]
-     (if (seq reasons) (hold reasons) pass))))
+                     (into kind-reasons))
+         escalations (soft-escalations proposal)]
+     (cond
+       (seq reasons) (hold reasons)
+       (seq escalations) (escalate escalations)
+       :else pass))))
 
 (defn censor
-  "All proposals of one tick -> {:approved [...] :held [{:proposal :reasons}]}.
+  "All proposals of one tick -> {:approved [...] :held [{:proposal
+  :reasons}] :escalated [{:proposal :escalations}]}.
   Order-preserving; every proposal lands in exactly one bucket. Mirrors
-  cloud-itonami.security-governor/censor's shape."
+  cloud-itonami.security-governor/censor's shape, extended with a
+  third `:escalated` bucket for SOFT signals (currently only
+  `:grid-outage-duration-mismatch`) that force human sign-off without
+  being a hard hold -- any proposal that never produces a soft
+  escalation lands in `:approved`/`:held` exactly as before this
+  bucket existed."
   ([proposals] (censor {} proposals))
   ([registry proposals]
    (reduce (fn [acc p]
              (let [r (check registry p)]
-               (if (= :hold (:status r))
-                 (update acc :held conj {:proposal p :reasons (:reasons r)})
+               (case (:status r)
+                 :hold (update acc :held conj {:proposal p :reasons (:reasons r)})
+                 :escalate (update acc :escalated conj {:proposal p :escalations (:escalations r)})
                  (update acc :approved conj p))))
-           {:approved [] :held []}
+           {:approved [] :held [] :escalated []}
            proposals)))

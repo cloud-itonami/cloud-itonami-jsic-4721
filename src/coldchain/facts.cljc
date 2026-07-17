@@ -99,3 +99,27 @@
         (<= handoff-min-c handoff-max-c)
         (<= handoff-min-c (:storage-temp-max-c commodity))
         (<= (:storage-temp-min-c commodity) handoff-max-c))))
+
+;; ───────────── Cross-Actor Grid-Outage Reference (isic-3510 -> jsic-4721) ─────────────
+;;
+;; An inbound (or outbound) lot proposal MAY ALSO carry three flat
+;; top-level reference fields (a DIFFERENT wire shape than the nested
+;; `:handoff` map above -- see `coldchain.governor`'s own docstring
+;; for why): a copy of an upstream grid-transmission-operator actor's
+;; own committed outage-event record (e.g. cloud-itonami-isic-3510's
+;; `grid.facts`'s own "Cross-Actor Grid-Outage Reference" section --
+;; superproject ADR-2608510000 documents the full shared shape both
+;; sides independently validate, no shared code, no shared store):
+;;
+;;   :grid-outage/source-actor "cloud-itonami-isic-3510"
+;;   :grid-outage/event-id "outage-1"            ; = the source record's own :grid-outage/id
+;;   :grid-outage/duration-minutes 75            ; = the source record's own :grid-outage/duration-minutes
+;;
+;; This actor cross-checks these three fields against its OWN
+;; self-reported `:lot/power-outage-minutes` via
+;; `coldchain.registry/grid-outage-duration-mismatch?` -- see
+;; `coldchain.governor/grid-outage-duration-mismatch-escalations`.
+;; Entirely optional on both sides (a proposal missing any of the
+;; three, or missing `:lot/power-outage-minutes`, is never escalated
+;; on this basis) and, unlike the handoff-compatibility check above,
+;; a mismatch is a SOFT escalation, never a hard hold.
