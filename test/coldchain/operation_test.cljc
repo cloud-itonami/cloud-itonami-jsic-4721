@@ -25,3 +25,20 @@
           result (operation/run-operation {} proposal governor/check operation/hold-fact)]
       (is (false? (:ok? result)))
       (is (some #(re-find #"allowlist" %) (:reasons (:verdict result)))))))
+
+(deftest run-operation-escalate-test
+  (testing "a soft-escalated proposal (grid-outage-duration-mismatch) is NOT ok, but its
+  audit fact is labelled :escalate, not :hold, and carries the escalations (not dropped)"
+    (let [proposal {:kind :log-inbound-shipment
+                    :lot/power-outage-minutes 200
+                    :grid-outage/source-actor "cloud-itonami-isic-3510"
+                    :grid-outage/event-id "outage-1"
+                    :grid-outage/duration-minutes 60}
+          result (operation/run-operation {} proposal governor/check operation/hold-fact)]
+      (is (false? (:ok? result)))
+      (is (= :escalate (:status (:verdict result))))
+      (is (= 1 (count (:facts result))))
+      (is (= :escalate (:disposition (first (:facts result))))
+        "the fact must not be mislabeled :hold")
+      (is (some #(re-find #"grid-outage" %) (:reasons (first (:facts result))))
+        "the escalations must not be silently dropped"))))

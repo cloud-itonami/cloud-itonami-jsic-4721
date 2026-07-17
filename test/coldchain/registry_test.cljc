@@ -17,3 +17,17 @@
   (is (true? (registry/power-outage-exceeds-max? 130 120)))
   (is (false? (registry/power-outage-exceeds-max? 120 120)))
   (is (false? (registry/power-outage-exceeds-max? 60 120))))
+
+(deftest grid-outage-duration-mismatch-symmetric-tolerance
+  (testing "within tolerance (self-report longer) is not a mismatch"
+    (is (false? (registry/grid-outage-duration-mismatch? 70 60 15))))
+  (testing "within tolerance (self-report shorter) is not a mismatch"
+    (is (false? (registry/grid-outage-duration-mismatch? 50 60 15))))
+  (testing "exactly at the tolerance boundary is not a mismatch (inclusive)"
+    (is (false? (registry/grid-outage-duration-mismatch? 75 60 15))))
+  (testing "beyond tolerance (self-report much longer) is a mismatch"
+    (is (true? (registry/grid-outage-duration-mismatch? 200 60 15))))
+  (testing "beyond tolerance (self-report much shorter) is a mismatch"
+    (is (true? (registry/grid-outage-duration-mismatch? 10 60 15))))
+  (testing "exact agreement is never a mismatch"
+    (is (false? (registry/grid-outage-duration-mismatch? 60 60 15)))))
