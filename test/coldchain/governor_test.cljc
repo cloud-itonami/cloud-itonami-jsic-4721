@@ -122,6 +122,15 @@
                                            :lot/commodity-class :coldchain/c3-chilled
                                            :lot/storage-temp-c 3.0}))))))
 
+(deftest handoff-with-optional-unspsc-gtin-pass-through-fields-passes
+  (testing "a handoff carrying the optional :handoff/unspsc-code and :handoff/gtin pass-through fields still passes when otherwise compatible -- neither field is validated"
+    (let [handoff (assoc chilled-poultry-handoff
+                          :handoff/unspsc-code "50192701"
+                          :handoff/gtin "0211075000011")]
+      (is (= :pass (:status (governor/check {:kind :log-inbound-shipment
+                                             :lot/commodity-class :coldchain/c3-chilled
+                                             :handoff handoff})))))))
+
 ;; ── inbound quantity-kg wired into capacity-concentration-limit ──
 
 (deftest inbound-shipment-quantity-kg-exceeds-concentration-limit-holds

@@ -69,7 +69,19 @@
 ;;    :handoff/cold-chain-temp-min-c 0.0
 ;;    :handoff/cold-chain-temp-max-c 3.0
 ;;    :handoff/quantity-kg 120.5
-;;    :handoff/dispatched-at-iso "..."}
+;;    :handoff/dispatched-at-iso "..."
+;;    :handoff/unspsc-code "50192701"    ; OPTIONAL, pass-through only -- see
+;;    :handoff/gtin "0211075000011"}     ; superproject UNSPSC/GTIN-linkage
+;;                                       ; ADR, mirroring mealops.facts's own
+;;                                       ; addendum. This actor's `governor`
+;;                                       ; does not read either field (no
+;;                                       ; existing predicate does); they
+;;                                       ; ride along on the record for
+;;                                       ; downstream traceability, the same
+;;                                       ; asymmetric-optional, no-new-hard-
+;;                                       ; check discipline this actor's own
+;;                                       ; grid-outage reference fields
+;;                                       ; (below) already establish.
 
 (defn handoff-compatible-with-commodity-class?
   "Positive-sense convenience predicate: does the declared handoff's
