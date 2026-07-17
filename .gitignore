@@ -1,0 +1,10 @@
+*.class
+*.jar
+*.war
+*.ear
+.DS_Store
+.nrepl-port
+.cpcache
+target/
+.cider-ns-history
+.calva/

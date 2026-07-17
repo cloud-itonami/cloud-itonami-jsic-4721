@@ -1,0 +1,30 @@
+{:paths ["src"]
+ ;; Standalone/zero-dependency on cloud-itonami core, matching
+ ;; cloud-itonami-isic-1075's `:deps {}` and the fleet standalone
+ ;; convention (ADR-2607011000, reaffirmed for the BCP-precondition
+ ;; case specifically by ADR-2607176501): this actor's own
+ ;; capacity-concentration-limit invariant is fully standalone pure
+ ;; logic. cloud-itonami's SecurityIncidentGovernor (ADR-2607176500,
+ ;; the circuit-breaker/pii-precheck/disclosure-guard/bcp-precondition
+ ;; layer this actor's :tenant/jsic "4721" classification participates
+ ;; in via `physical-ops-jsics`) is enforced at the cloud-itonami
+ ;; PLATFORM layer when this actor onboards as a tenant -- not
+ ;; re-implemented or depended on here. See README.md / the ADR for
+ ;; this repo for the full boundary rationale.
+ :deps {}
+ :aliases
+ {:dev {:override-deps
+        {io.github.kotoba-lang/langchain
+         {:local/root "../../kotoba-lang/langchain"}
+         io.github.kotoba-lang/langgraph
+         {:local/root "../../kotoba-lang/langgraph"}}}
+  :run {:main-opts ["-m" "coldchain.sim"]}
+  :test {:extra-paths ["test"]
+         :extra-deps {io.github.cognitect-labs/test-runner
+                      {:git/tag "v0.5.1" :git/sha "dfb30dd"}}
+         :main-opts ["-m" "cognitect.test-runner"]
+         :exec-fn cognitect.test-runner.api/test}
+  :lint {:replace-deps {clj-kondo/clj-kondo {:mvn/version "2024.11.14"}}
+         :main-opts    ["-m" "clj-kondo.main"
+                        "--lint" "src" "test"
+                        "--fail-level" "error"]}}}

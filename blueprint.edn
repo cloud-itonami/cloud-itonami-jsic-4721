@@ -1,0 +1,12 @@
+{:itonami.blueprint/id "cloud-itonami-jsic-4721"
+ :itonami.blueprint/name "Refrigerated Warehousing (Cold-Chain 3PL) Coordination"
+ :itonami.blueprint/jsic-code "4721"
+ :itonami.blueprint/domain :logistics/refrigerated-warehousing
+ :itonami.blueprint/license "AGPL-3.0-or-later"
+ :itonami.blueprint/social-impact [:food-security :business-continuity :supply-chain-resilience]
+ :itonami.blueprint/governor :coldchain-governor
+ :itonami.blueprint/robotics true
+ :itonami.blueprint/required-technologies [:identity :forms :audit-ledger :cae]
+ :itonami.blueprint/optional-technologies [:telemetry]
+ :itonami.blueprint/status :public-oss
+ :itonami.blueprint/maturity :blueprint}
