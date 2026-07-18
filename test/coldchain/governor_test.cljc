@@ -215,6 +215,85 @@
                              :grid-outage/duration-minutes 60})]
       (is (= :hold (:status r))))))
 
+;; ── equipment-asset linkage (isic-2813 -> jsic-4721) ──
+
+(def ^:private valid-equipment-asset
+  {:kind :register-equipment-asset
+   :equipment-asset/id "ea-1"
+   :equipment-asset/unit-type-id :unit/industrial-refrigeration-compressor
+   :equipment-asset/source-actor "cloud-itonami-isic-2813"
+   :equipment-asset/dispatch-ref "JPN-PEQ-000000"
+   :equipment-asset/installed-at-iso "2026-07-18T00:00:00Z"})
+
+(deftest register-equipment-asset-with-all-required-fields-passes
+  (is (= :pass (:status (governor/check valid-equipment-asset)))))
+
+(deftest register-equipment-asset-missing-fields-holds
+  (testing "missing :equipment-asset/dispatch-ref holds"
+    (let [r (governor/check (dissoc valid-equipment-asset :equipment-asset/dispatch-ref))]
+      (is (= :hold (:status r)))
+      (is (some #(re-find #"missing" %) (:reasons r)))))
+  (testing "missing :equipment-asset/id holds"
+    (let [r (governor/check (dissoc valid-equipment-asset :equipment-asset/id))]
+      (is (= :hold (:status r)))))
+  (testing "missing :equipment-asset/unit-type-id holds"
+    (let [r (governor/check (dissoc valid-equipment-asset :equipment-asset/unit-type-id))]
+      (is (= :hold (:status r)))))
+  (testing "missing :equipment-asset/source-actor holds"
+    (let [r (governor/check (dissoc valid-equipment-asset :equipment-asset/source-actor))]
+      (is (= :hold (:status r))))))
+
+(deftest register-equipment-asset-duplicate-id-holds
+  (testing "an :equipment-asset/id already present in the registry context's :registered-ids holds"
+    (let [r (governor/check {:equipment-asset/registered-ids #{"ea-1"}} valid-equipment-asset)]
+      (is (= :hold (:status r)))
+      (is (some #(re-find #"already" %) (:reasons r))))))
+
+(deftest register-equipment-asset-different-id-does-not-hold-on-duplicate-basis
+  (testing "a NEW :equipment-asset/id, even with a non-empty :registered-ids context, never holds on the duplicate basis"
+    (let [r (governor/check {:equipment-asset/registered-ids #{"ea-9"}} valid-equipment-asset)]
+      (is (not (some #(re-find #"already" %) (:reasons r)))))))
+
+(deftest register-equipment-asset-with-no-registry-context-passes
+  (testing "omitting the registry context entirely (default {}) never holds on the duplicate basis"
+    (is (= :pass (:status (governor/check valid-equipment-asset))))))
+
+;; ── maintenance-notice cross-check (isic-2813 -> jsic-4721, soft escalation) ──
+
+(deftest maintenance-notice-referencing-registered-asset-escalates
+  (testing "a :log-inbound-shipment carrying a :maintenance-notice for an already-registered asset escalates"
+    (let [r (governor/check {:equipment-asset/registered-ids #{"ea-1"}}
+                            {:kind :log-inbound-shipment
+                             :lot/commodity-class :coldchain/c3-chilled
+                             :lot/storage-temp-c 3.0
+                             :maintenance-notice {:maintenance-notice/source-actor "cloud-itonami-isic-2813"
+                                                   :maintenance-notice/dispatch-ref "JPN-PEQ-000000"
+                                                   :maintenance-notice/equipment-asset-id "ea-1"}})]
+      (is (= :escalate (:status r)))
+      (is (some #(re-find #"maintenance-notice" %) (:escalations r))))))
+
+(deftest maintenance-notice-referencing-unregistered-asset-does-not-escalate
+  (testing "a :maintenance-notice referencing an asset NOT (yet) registered here does not escalate on this basis"
+    (let [r (governor/check {:equipment-asset/registered-ids #{"ea-9"}}
+                            {:kind :log-outbound-shipment
+                             :maintenance-notice {:maintenance-notice/equipment-asset-id "ea-1"}})]
+      (is (not (some #(re-find #"maintenance-notice" %) (:escalations r)))))))
+
+(deftest lot-proposal-without-maintenance-notice-field-passes
+  (testing "a shipment-logging proposal without :maintenance-notice is unaffected (backward compatible)"
+    (is (= :pass (:status (governor/check {:equipment-asset/registered-ids #{"ea-1"}}
+                                          {:kind :log-inbound-shipment
+                                           :lot/commodity-class :coldchain/c3-chilled
+                                           :lot/storage-temp-c 3.0}))))))
+
+(deftest maintenance-notice-escalation-does-not-apply-outside-shipment-logging-kinds
+  (testing "the maintenance-notice cross-check is only wired into :log-inbound-shipment/:log-outbound-shipment, not e.g. :capacity/allocate"
+    (is (= :pass (:status (governor/check {:equipment-asset/registered-ids #{"ea-1"}}
+                                          {:kind :capacity/allocate
+                                           :capacity/allocated-units 100
+                                           :capacity/total-units 1000
+                                           :maintenance-notice {:maintenance-notice/equipment-asset-id "ea-1"}}))))))
+
 ;; ── censor ──
 
 (deftest censor-buckets-every-proposal-exactly-once
