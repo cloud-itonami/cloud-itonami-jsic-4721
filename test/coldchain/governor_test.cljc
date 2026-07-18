@@ -347,6 +347,101 @@
                                            :capacity/total-units 1000
                                            :maintenance-notice {:maintenance-notice/equipment-asset-id "ea-1"}}))))))
 
+;; ── power-metering reconciliation (isic-3510 -> jsic-4721) ──
+;;
+;; SOFT escalation, not a hard hold -- mirrors the grid-outage
+;; duration-mismatch cross-check's own posture above, but for
+;; STEADY-STATE consumption reconciliation. See
+;; coldchain.governor/power-metering-deviation-escalations.
+
+(def ^:private one-clean-compressor
+  "One registered compressor (90.0kW rated, see coldchain.facts/
+  unit-type-power-kw), installed well before any test period so it
+  is presumed running for the FULL period in every test below."
+  [{:equipment-asset/id "ea-1"
+    :equipment-asset/unit-type-id :unit/industrial-refrigeration-compressor
+    :equipment-asset/source-actor "cloud-itonami-isic-2813"
+    :equipment-asset/dispatch-ref "JPN-PEQ-000000"
+    :equipment-asset/installed-at-iso "2026-01-01T00:00:00Z"}])
+
+(deftest power-metering-within-threshold-passes-cleanly
+  (testing "expected = 90.0kW x 168h = 15120kWh; a self-report within +/-20% passes"
+    (is (= :pass (:status (governor/check {:kind :reconcile-power-metering
+                                           :power-metering/id "feeder-1-MTR-2026-07-01T00:00:00Z"
+                                           :power-metering/feeder-ref "feeder-1"
+                                           :power-metering/client-actor "cloud-itonami-jsic-4721"
+                                           :power-metering/period-start-iso "2026-07-01T00:00:00Z"
+                                           :power-metering/period-end-iso "2026-07-08T00:00:00Z"
+                                           :power-metering/consumed-kwh 16000.0
+                                           :equipment-assets one-clean-compressor}))))))
+
+(deftest power-metering-deviation-beyond-threshold-escalates-not-holds
+  (testing "a self-reported consumption far above the expected 15120kWh escalates, does not hold"
+    (let [r (governor/check {:kind :reconcile-power-metering
+                             :power-metering/id "feeder-1-MTR-2026-07-01T00:00:00Z"
+                             :power-metering/feeder-ref "feeder-1"
+                             :power-metering/client-actor "cloud-itonami-jsic-4721"
+                             :power-metering/period-start-iso "2026-07-01T00:00:00Z"
+                             :power-metering/period-end-iso "2026-07-08T00:00:00Z"
+                             :power-metering/consumed-kwh 30000.0
+                             :equipment-assets one-clean-compressor})]
+      (is (= :escalate (:status r)))
+      (is (some #(re-find #"power-metering" %) (:escalations r)))
+      (is (not= :hold (:status r))))))
+
+(deftest power-metering-deviation-below-threshold-also-escalates
+  (testing "symmetric -- a self-report far BELOW the expectation also escalates"
+    (let [r (governor/check {:kind :reconcile-power-metering
+                             :power-metering/period-start-iso "2026-07-01T00:00:00Z"
+                             :power-metering/period-end-iso "2026-07-08T00:00:00Z"
+                             :power-metering/consumed-kwh 100.0
+                             :equipment-assets one-clean-compressor})]
+      (is (= :escalate (:status r)))
+      (is (seq (:escalations r))))))
+
+(deftest power-metering-missing-equipment-assets-never-escalates-on-this-basis
+  (testing "an empty/absent :equipment-assets list is not enough information to compute an expectation -- never escalates (asymmetric-optional)"
+    (is (= :pass (:status (governor/check {:kind :reconcile-power-metering
+                                           :power-metering/period-start-iso "2026-07-01T00:00:00Z"
+                                           :power-metering/period-end-iso "2026-07-08T00:00:00Z"
+                                           :power-metering/consumed-kwh 30000.0}))))
+    (is (= :pass (:status (governor/check {:kind :reconcile-power-metering
+                                           :power-metering/period-start-iso "2026-07-01T00:00:00Z"
+                                           :power-metering/period-end-iso "2026-07-08T00:00:00Z"
+                                           :power-metering/consumed-kwh 30000.0
+                                           :equipment-assets []}))))))
+
+(deftest power-metering-missing-consumed-kwh-never-escalates-on-this-basis
+  (testing "no self-reported :consumed-kwh at all -- never escalates (backward compatible)"
+    (is (= :pass (:status (governor/check {:kind :reconcile-power-metering
+                                           :power-metering/period-start-iso "2026-07-01T00:00:00Z"
+                                           :power-metering/period-end-iso "2026-07-08T00:00:00Z"
+                                           :equipment-assets one-clean-compressor}))))))
+
+(deftest power-metering-unrecognized-unit-type-contributes-zero-expected-and-never-escalates
+  (testing "an equipment-asset whose unit-type-id this actor has no local power-kw reference for contributes 0.0 expected kWh -- expected becomes 0, deviation-ratio is nil (can't divide by zero-or-negative expected), so this never escalates on the power-metering basis, it does not fabricate a figure"
+    (is (= :pass (:status (governor/check {:kind :reconcile-power-metering
+                                           :power-metering/period-start-iso "2026-07-01T00:00:00Z"
+                                           :power-metering/period-end-iso "2026-07-08T00:00:00Z"
+                                           :power-metering/consumed-kwh 30000.0
+                                           :equipment-assets [{:equipment-asset/id "ea-9"
+                                                               :equipment-asset/unit-type-id :unit/unknown-widget
+                                                               :equipment-asset/installed-at-iso "2026-01-01T00:00:00Z"}]}))))))
+
+(deftest power-metering-deviation-never-overrides-a-hard-hold
+  (testing ":reconcile-power-metering itself has no hard check, but an out-of-allowlist kind still hard-holds regardless"
+    (is (= :hold (:status (governor/check {:kind :control-reefer-compressor
+                                           :power-metering/period-start-iso "2026-07-01T00:00:00Z"
+                                           :power-metering/period-end-iso "2026-07-08T00:00:00Z"
+                                           :power-metering/consumed-kwh 30000.0
+                                           :equipment-assets one-clean-compressor})))))
+  (testing "a genuinely allowlisted, clean :reconcile-power-metering proposal escalates rather than holds"
+    (is (= :escalate (:status (governor/check {:kind :reconcile-power-metering
+                                               :power-metering/period-start-iso "2026-07-01T00:00:00Z"
+                                               :power-metering/period-end-iso "2026-07-08T00:00:00Z"
+                                               :power-metering/consumed-kwh 30000.0
+                                               :equipment-assets one-clean-compressor}))))))
+
 ;; ── censor ──
 
 (deftest censor-buckets-every-proposal-exactly-once

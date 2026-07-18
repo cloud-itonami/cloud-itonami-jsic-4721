@@ -72,3 +72,12 @@
     (is (false? (facts/equipment-asset-maintenance-notice-for-registered-asset?
                  {:maintenance-notice/equipment-asset-id "ea-1"}
                  #{})))))
+
+;; ──── Equipment Power-Requirement Reference (for :reconcile-power-metering) ────
+
+(deftest unit-type-power-kw-of-known-unit-type
+  (is (= 90.0 (facts/unit-type-power-kw-of :unit/industrial-refrigeration-compressor))))
+
+(deftest unit-type-power-kw-of-unknown-unit-type-is-nil
+  (testing "an unrecognized unit-type-id is never fabricated a figure -- nil, not 0 or a guess"
+    (is (nil? (facts/unit-type-power-kw-of :unit/unknown-widget)))))
