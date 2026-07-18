@@ -160,7 +160,7 @@
 
   ── Power-metering reconciliation (isic-3510 -> jsic-4721) ──
 
-  `:reconcile-power-metering` (new kind, superproject ADR-2800001000)
+  `:reconcile-power-metering` (new kind, superproject ADR-2800001100)
   receives a `:power-metering/*` reading logged by an upstream
   distribution-utility actor (e.g. cloud-itonami-isic-3510's own
   `grid.gridadvisor/log-metering-reading`/`grid.governor` -- a
