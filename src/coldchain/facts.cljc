@@ -211,6 +211,39 @@
 ;; actually equipment we operate"), a SOFT escalation, never a hard
 ;; hold, same reasoning as the grid-outage cross-check above.
 
+;; ───────── Equipment Power-Requirement Reference (for :reconcile-power-metering) ─────────
+;;
+;; This actor's OWN small, LOCAL reference for how many kW of continuous
+;; power draw a registered `:equipment-asset/unit-type-id` requires --
+;; deliberately NOT a shared-library import from cloud-itonami-isic-2813's
+;; own `pressureequip.facts/unit-types` catalog (this repo has zero
+;; dependency on any other cloud-itonami repo, ADR-2607011000/
+;; ADR-2607176501; see `coldchain.governor` ns docstring's own "Design
+;; boundary" section) -- the SAME no-shared-code, only-a-shared-id-
+;; convention discipline every cross-actor reference in this file uses.
+;; Honest-coverage discipline (same as `commodity-classes`/
+;; `jurisdictions` above): an `:equipment-asset/unit-type-id` absent
+;; from this catalog contributes 0.0 kW to `coldchain.kernels.power-
+;; metering-verdict/expected-consumption-kwh`, it is never fabricated.
+;; The one seeded entry cites the REAL figure from cloud-itonami-
+;; isic-2813's own `pressureequip.facts/unit-types` catalog at the time
+;; this was written (90.0 kW for `:unit/industrial-refrigeration-
+;; compressor`, the same unit-type-id this repo's own equipment-asset
+;; test fixtures already reference) -- extending coverage is additive:
+;; add one entry, cite the real isic-2813 figure, never invent a number
+;; to make coverage look complete.
+
+(def unit-type-power-kw
+  "unit-type-id -> {:power-requirement-kw <double>}."
+  {:unit/industrial-refrigeration-compressor {:power-requirement-kw 90.0}})
+
+(defn unit-type-power-kw-of
+  "The rated continuous power draw (kW) for `unit-type-id`, or nil if
+  this actor's own local reference has no entry for it (never
+  fabricated -- see this section's own comment above)."
+  [unit-type-id]
+  (:power-requirement-kw (get unit-type-power-kw unit-type-id)))
+
 (defn equipment-asset-maintenance-notice-for-registered-asset?
   "Positive-sense convenience predicate: does `maintenance-notice`'s
   `:maintenance-notice/equipment-asset-id` name an equipment asset

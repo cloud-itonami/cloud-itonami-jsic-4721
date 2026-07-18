@@ -158,6 +158,32 @@
   operators; isic-3510 is entirely optional and this actor has no code
   path that depends on it.
 
+  ── Power-metering reconciliation (isic-3510 -> jsic-4721) ──
+
+  `:reconcile-power-metering` (new kind, superproject ADR-2800001000)
+  receives a `:power-metering/*` reading logged by an upstream
+  distribution-utility actor (e.g. cloud-itonami-isic-3510's own
+  `grid.gridadvisor/log-metering-reading`/`grid.governor` -- a
+  SEPARATE, entirely optional, no-shared-code cross-actor contract on
+  the SAME (isic-3510, jsic-4721) pair as the grid-outage reference
+  above, but for STEADY-STATE consumption reconciliation rather than
+  outage events) plus this proposal's OWN `:equipment-assets` list
+  (the equipment-asset records this actor has registered, see
+  `:register-equipment-asset` above). `power-metering-deviation-
+  escalations` (kernel: `coldchain.kernels.power-metering-verdict`)
+  independently computes what consumption THIS actor would EXPECT from
+  its registered equipment-assets' rated power draw and a simple
+  operating-hours overlap against the metering period, and SOFT-
+  escalates (never a hard hold -- electricity consumption has normal
+  business variance) when the upstream self-reported `:consumed-kwh`
+  deviates from that expectation by more than `pmv/default-deviation-
+  threshold` (default +/-20%). This kind has no HARD check of its own
+  at all (unlike `:register-equipment-asset`'s required-fields/
+  double-registration guards): closed-allowlist membership is its only
+  hard gate, the same asymmetric-optional, escalate-only posture
+  `grid-outage-duration-mismatch-escalations` establishes for the
+  OTHER isic-3510 cross-actor reference.
+
   Composition shape (multimethod `rule` dispatching on `:kind`, closed
   allowlist, `{:status :pass|:hold|:escalate :reasons [...]}`) mirrors
   cloud-itonami.security-governor's own shape -- the two governors
@@ -208,6 +234,7 @@
   duration-mismatch-escalations` are unchanged -- this is additive
   wiring alongside them, not a replacement."
   (:require [coldchain.kernels.concentration-verdict :as cv]
+            [coldchain.kernels.power-metering-verdict :as pmv]
             [coldchain.facts :as facts]
             [coldchain.registry :as registry]))
 
@@ -221,7 +248,7 @@
   `allowed-ops`. Anything outside this set is refused unconditionally."
   #{:tenant/onboard :capacity/allocate :log-inbound-shipment
     :log-outbound-shipment :flag-temperature-excursion
-    :register-equipment-asset})
+    :register-equipment-asset :reconcile-power-metering})
 
 (def reason-kind-not-allowed
   "proposal :kind is outside this actor's closed allowlist (:tenant/onboard / :capacity/allocate / :log-inbound-shipment / :log-outbound-shipment / :flag-temperature-excursion / :register-equipment-asset)")
@@ -246,6 +273,9 @@
 
 (def reason-equipment-asset-maintenance-notice-for-registered-asset
   "an inbound/outbound lot proposal's optional :maintenance-notice reference names an :equipment-asset/id this actor has already registered -- SOFT escalation for human visibility (mirrors cloud-itonami-isic-1075's :supplier-not-verified soft-escalation pattern), never a hard hold")
+
+(def reason-power-metering-deviation-exceeds-threshold
+  pmv/reason-power-metering-deviation-exceeds-threshold)
 
 (defmulti ^:private rule
   "One proposal (+ registry context) -> seq of hold-reason strings
@@ -358,13 +388,40 @@
            (:maintenance-notice proposal) registered)
       [reason-equipment-asset-maintenance-notice-for-registered-asset])))
 
+(defn- power-metering-deviation-escalations
+  "SOFT escalation, never a hard hold -- for `:reconcile-power-
+  metering` proposals only. Independently computes what this actor's
+  OWN registered equipment-assets (the proposal's own `:equipment-
+  assets` list) would be EXPECTED to consume over
+  [`:power-metering/period-start-iso`, `:power-metering/period-end-
+  iso`], via `coldchain.kernels.power-metering-verdict/expected-
+  consumption-kwh` + `coldchain.facts/unit-type-power-kw-of`, and
+  compares that against the upstream distribution-utility's own
+  self-reported `:power-metering/consumed-kwh`. Only evaluated when the
+  proposal carries a numeric `:power-metering/consumed-kwh`, a
+  non-empty `:equipment-assets` seq, and both period timestamps -- a
+  proposal missing any of these is not escalated on this basis
+  (asymmetric-optional, same discipline as every check in `lot-
+  physical-violations`/`grid-outage-duration-mismatch-escalations`)."
+  [proposal]
+  (let [consumed (:power-metering/consumed-kwh proposal)
+        assets (:equipment-assets proposal)
+        start (:power-metering/period-start-iso proposal)
+        end (:power-metering/period-end-iso proposal)]
+    (when (and (number? consumed) (seq assets) (some? start) (some? end))
+      (let [expected (pmv/expected-consumption-kwh assets facts/unit-type-power-kw-of start end)
+            ratio (pmv/deviation-ratio consumed expected)]
+        (when (= 1 (pmv/deviation-exceeds-threshold? ratio pmv/default-deviation-threshold))
+          [reason-power-metering-deviation-exceeds-threshold])))))
+
 (defn- soft-escalations
   "Kind-specific SOFT signals -- never a hold, but force `:status
   :escalate` (human sign-off) even when the hard checks in `rule` are
   clean. `grid-outage-duration-mismatch-escalations` and
   `equipment-asset-maintenance-notice-escalations` for `:log-inbound-
-  shipment`/`:log-outbound-shipment` -- `registry` is the SAME
-  governor-supplied context `rule`/`check` already thread through
+  shipment`/`:log-outbound-shipment`, `power-metering-deviation-
+  escalations` for `:reconcile-power-metering` -- `registry` is the
+  SAME governor-supplied context `rule`/`check` already thread through
   (default `{}`), needed here for the equipment-asset cross-check's
   `:equipment-asset/registered-ids`."
   [registry proposal]
@@ -372,6 +429,8 @@
     (:log-inbound-shipment :log-outbound-shipment)
     (into (grid-outage-duration-mismatch-escalations proposal)
           (equipment-asset-maintenance-notice-escalations registry proposal))
+    :reconcile-power-metering
+    (power-metering-deviation-escalations proposal)
     []))
 
 (defn- inbound-concentration-violations
