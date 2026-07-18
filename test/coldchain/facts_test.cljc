@@ -42,3 +42,33 @@
 
   (testing "nil commodity class is incompatible"
     (is (false? (facts/handoff-compatible-with-commodity-class? 0.0 3.0 nil)))))
+
+;; ──────────── Equipment-Asset Linkage (isic-2813 -> jsic-4721) ────────────
+
+(deftest equipment-asset-maintenance-notice-for-registered-asset-test
+  (testing "a maintenance-notice referencing a registered asset id matches"
+    (is (true? (facts/equipment-asset-maintenance-notice-for-registered-asset?
+                {:maintenance-notice/source-actor "cloud-itonami-isic-2813"
+                 :maintenance-notice/equipment-asset-id "ea-1"}
+                #{"ea-1" "ea-2"}))))
+
+  (testing "a maintenance-notice referencing an UNregistered asset id does not match"
+    (is (false? (facts/equipment-asset-maintenance-notice-for-registered-asset?
+                 {:maintenance-notice/equipment-asset-id "ea-9"}
+                 #{"ea-1" "ea-2"}))))
+
+  (testing "nil maintenance-notice never matches"
+    (is (false? (facts/equipment-asset-maintenance-notice-for-registered-asset? nil #{"ea-1"}))))
+
+  (testing "a non-map maintenance-notice never matches"
+    (is (false? (facts/equipment-asset-maintenance-notice-for-registered-asset? "ea-1" #{"ea-1"}))))
+
+  (testing "a maintenance-notice with no :equipment-asset-id never matches"
+    (is (false? (facts/equipment-asset-maintenance-notice-for-registered-asset?
+                 {:maintenance-notice/source-actor "cloud-itonami-isic-2813"}
+                 #{"ea-1"}))))
+
+  (testing "empty registered-ids never matches"
+    (is (false? (facts/equipment-asset-maintenance-notice-for-registered-asset?
+                 {:maintenance-notice/equipment-asset-id "ea-1"}
+                 #{})))))

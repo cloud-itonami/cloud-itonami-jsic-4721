@@ -111,7 +111,52 @@
   Composition shape (multimethod `rule` dispatching on `:kind`, closed
   allowlist, `{:status :pass|:hold|:escalate :reasons [...]}`) mirrors
   cloud-itonami.security-governor's own shape -- the two governors
-  look alike by design even though they don't call each other."
+  look alike by design even though they don't call each other.
+
+  ── Equipment-asset linkage (isic-2813 -> jsic-4721) ──
+
+  `:register-equipment-asset` (new op, superproject equipment-asset-
+  linkage ADR) registers WHICH manufactured unit (e.g. a
+  cloud-itonami-isic-2813 industrial-refrigeration-compressor) this
+  warehouse actually operates -- the `:equipment-asset` shared shape
+  (see `coldchain.facts`'s own \"Equipment-Asset Linkage\" section for
+  the full field list; no shared code, no shared store, same design
+  as the isic-1075 `:handoff`/isic-3510 grid-outage references above).
+  TWO independent checks, both additive, neither touching any
+  existing rule:
+
+    1. required-fields (HARD hold, `reason-equipment-asset-missing-
+       fields`) -- a proposal missing any of `:equipment-asset/id`/
+       `:unit-type-id`/`:source-actor`/`:dispatch-ref` is refused; this
+       actor never registers a partial/fabricated equipment-asset
+       record.
+    2. double-registration guard (HARD hold, `reason-equipment-asset-
+       already-registered`) -- the SAME 'never register the same
+       correlation id twice' discipline every dispatch/certificate-
+       style double-commit guard in this fleet establishes (e.g.
+       cloud-itonami-isic-2813's `already-dispatched-violations`),
+       adapted to THIS governor's stateless/pure shape: `registry`'s
+       `:equipment-asset/registered-ids` (governor-supplied context,
+       may be `{}`/absent, analogous to `cloud-itonami.security-
+       governor`'s `:active-incident?` context key) carries the ids
+       already registered -- this governor never queries a store
+       itself.
+
+  `:log-inbound-shipment`/`:log-outbound-shipment` proposals MAY ALSO
+  carry an optional `:maintenance-notice` reference (a nested map, the
+  wire shape a downstream isic-2813 `:issue-maintenance-notice` event
+  populates) -- `equipment-asset-maintenance-notice-escalations` below
+  cross-checks its `:maintenance-notice/equipment-asset-id` against
+  the SAME `registry` `:equipment-asset/registered-ids` context, and
+  SOFT-escalates (never a hard hold) when it matches an asset this
+  actor has already registered -- 'the equipment that received a
+  maintenance notice is actually equipment we operate' is useful
+  cross-actor traceability, the same non-hard-hold, escalate-only
+  pattern `grid-outage-duration-mismatch-escalations`/cloud-itonami-
+  isic-1075's own `mealops.governor/supplier-not-verified-escalation`
+  establish. Existing `lot-physical-violations`/`grid-outage-
+  duration-mismatch-escalations` are unchanged -- this is additive
+  wiring alongside them, not a replacement."
   (:require [coldchain.kernels.concentration-verdict :as cv]
             [coldchain.facts :as facts]
             [coldchain.registry :as registry]))
@@ -125,10 +170,11 @@
   closed-vocabulary discipline as cloud-itonami-isic-1075/-5210's
   `allowed-ops`. Anything outside this set is refused unconditionally."
   #{:tenant/onboard :capacity/allocate :log-inbound-shipment
-    :log-outbound-shipment :flag-temperature-excursion})
+    :log-outbound-shipment :flag-temperature-excursion
+    :register-equipment-asset})
 
 (def reason-kind-not-allowed
-  "proposal :kind is outside this actor's closed allowlist (:tenant/onboard / :capacity/allocate / :log-inbound-shipment / :log-outbound-shipment / :flag-temperature-excursion)")
+  "proposal :kind is outside this actor's closed allowlist (:tenant/onboard / :capacity/allocate / :log-inbound-shipment / :log-outbound-shipment / :flag-temperature-excursion / :register-equipment-asset)")
 
 (def reason-storage-temp-out-of-range
   "storage lot's actual temperature falls outside its commodity class's safe storage window (cold-chain break)")
@@ -141,6 +187,15 @@
 
 (def reason-grid-outage-duration-mismatch
   "self-reported :lot/power-outage-minutes disagrees (beyond registry/default-grid-outage-tolerance-minutes) with the independently reported :grid-outage/duration-minutes from the referenced grid-transmission-operator outage event -- SOFT escalation to a human, not a hard hold (mirrors cloud-itonami-isic-1075's :supplier-not-verified soft-escalation pattern)")
+
+(def reason-equipment-asset-missing-fields
+  "a :register-equipment-asset proposal is missing one or more required fields (:equipment-asset/id / :unit-type-id / :source-actor / :dispatch-ref) -- this actor never registers a partial/fabricated equipment-asset record")
+
+(def reason-equipment-asset-already-registered
+  "a :register-equipment-asset proposal's :equipment-asset/id is already present in the governor-supplied registry context's :equipment-asset/registered-ids -- the same double-commit-guard discipline every dispatch/certificate-style guard in this fleet establishes, adapted to this governor's stateless/pure shape")
+
+(def reason-equipment-asset-maintenance-notice-for-registered-asset
+  "an inbound/outbound lot proposal's optional :maintenance-notice reference names an :equipment-asset/id this actor has already registered -- SOFT escalation for human visibility (mirrors cloud-itonami-isic-1075's :supplier-not-verified soft-escalation pattern), never a hard hold")
 
 (defmulti ^:private rule
   "One proposal (+ registry context) -> seq of hold-reason strings
@@ -229,15 +284,44 @@
                 self-reported grid-minutes registry/default-grid-outage-tolerance-minutes))
       [reason-grid-outage-duration-mismatch])))
 
+(defn- equipment-asset-maintenance-notice-escalations
+  "SOFT escalation, never a hard hold -- colocated here with `grid-
+  outage-duration-mismatch-escalations` for the same `:log-inbound-
+  shipment`/`:log-outbound-shipment` proposals, but reading a
+  DIFFERENT optional reference field (`:maintenance-notice`, a nested
+  map -- see `coldchain.facts`'s own \"Equipment-Asset Linkage\"
+  section). When present and its `:maintenance-notice/equipment-
+  asset-id` names an equipment asset THIS actor has already
+  registered (`registry`'s `:equipment-asset/registered-ids`, the
+  SAME context `:register-equipment-asset`'s double-registration
+  guard reads), escalate for human visibility: 'the equipment that
+  received a maintenance notice is actually equipment we operate' is
+  useful cross-actor traceability, not grounds to block the shipment-
+  logging proposal on its own -- same reasoning as `grid-outage-
+  duration-mismatch-escalations`. A proposal missing `:maintenance-
+  notice`, or whose referenced id is not (yet) registered here, is
+  never escalated on this basis (asymmetric-optional, same discipline
+  as every check in `lot-physical-violations`)."
+  [registry proposal]
+  (let [registered (:equipment-asset/registered-ids registry #{})]
+    (when (facts/equipment-asset-maintenance-notice-for-registered-asset?
+           (:maintenance-notice proposal) registered)
+      [reason-equipment-asset-maintenance-notice-for-registered-asset])))
+
 (defn- soft-escalations
   "Kind-specific SOFT signals -- never a hold, but force `:status
   :escalate` (human sign-off) even when the hard checks in `rule` are
-  clean. Currently only `grid-outage-duration-mismatch-escalations`
-  for `:log-inbound-shipment`/`:log-outbound-shipment`."
-  [proposal]
+  clean. `grid-outage-duration-mismatch-escalations` and
+  `equipment-asset-maintenance-notice-escalations` for `:log-inbound-
+  shipment`/`:log-outbound-shipment` -- `registry` is the SAME
+  governor-supplied context `rule`/`check` already thread through
+  (default `{}`), needed here for the equipment-asset cross-check's
+  `:equipment-asset/registered-ids`."
+  [registry proposal]
   (case (:kind proposal)
     (:log-inbound-shipment :log-outbound-shipment)
-    (grid-outage-duration-mismatch-escalations proposal)
+    (into (grid-outage-duration-mismatch-escalations proposal)
+          (equipment-asset-maintenance-notice-escalations registry proposal))
     []))
 
 (defn- inbound-concentration-violations
@@ -265,12 +349,32 @@
   (into (lot-physical-violations proposal) (inbound-concentration-violations proposal)))
 (defmethod rule :log-outbound-shipment [_ proposal] (lot-physical-violations proposal))
 
+(defn- equipment-asset-required-fields-present?
+  [proposal]
+  (every? some? [(:equipment-asset/id proposal)
+                 (:equipment-asset/unit-type-id proposal)
+                 (:equipment-asset/source-actor proposal)
+                 (:equipment-asset/dispatch-ref proposal)]))
+
+(defmethod rule :register-equipment-asset [registry proposal]
+  (let [id (:equipment-asset/id proposal)
+        registered (:equipment-asset/registered-ids registry #{})]
+    (cond-> []
+      (not (equipment-asset-required-fields-present? proposal))
+      (conj reason-equipment-asset-missing-fields)
+
+      (and (some? id) (contains? (set registered) id))
+      (conj reason-equipment-asset-already-registered))))
+
 (defn check
   "One proposal -> {:status :pass} | {:status :hold :reasons [...]}
   | {:status :escalate :escalations [...]}.
   `registry` is optional context (default {}), forwarded to `rule`
-  for parity with cloud-itonami.security-governor's shape even though
-  no rule here currently reads it.
+  for parity with cloud-itonami.security-governor's shape --
+  `:register-equipment-asset`'s double-registration guard and
+  `equipment-asset-maintenance-notice-escalations` both now read its
+  `:equipment-asset/registered-ids`; every other existing rule still
+  ignores it.
 
   `:escalate` is a strictly weaker signal than `:hold`: it is only
   ever returned when `reasons` (the hard-violation vector) is empty --
@@ -288,7 +392,7 @@
          reasons (-> []
                      (into allowlist-reasons)
                      (into kind-reasons))
-         escalations (soft-escalations proposal)]
+         escalations (soft-escalations registry proposal)]
      (cond
        (seq reasons) (hold reasons)
        (seq escalations) (escalate escalations)

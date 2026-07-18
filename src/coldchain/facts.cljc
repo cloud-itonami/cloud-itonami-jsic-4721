@@ -123,3 +123,51 @@
 ;; three, or missing `:lot/power-outage-minutes`, is never escalated
 ;; on this basis) and, unlike the handoff-compatibility check above,
 ;; a mismatch is a SOFT escalation, never a hard hold.
+
+;; ───────────── Equipment-Asset Linkage (isic-2813 -> jsic-4721) ─────────────
+;;
+;; This actor's own `:register-equipment-asset` proposals register WHICH
+;; manufactured unit (e.g. a cloud-itonami-isic-2813 industrial-
+;; refrigeration-compressor) this warehouse actually operates -- the
+;; superproject `:equipment-asset` shared shape (equipment-asset-linkage
+;; ADR, no shared code, no shared store, same asymmetric-optional
+;; design as the two cross-actor references above):
+;;
+;;   {:equipment-asset/id "..."                                        ; correlation id
+;;    :equipment-asset/unit-type-id :unit/industrial-refrigeration-compressor  ; == isic-2813's pressureequip.facts/unit-types key
+;;    :equipment-asset/source-actor "cloud-itonami-isic-2813"
+;;    :equipment-asset/dispatch-ref "JPN-PEQ-000000"                    ; == isic-2813's :actuation/dispatch-unit dispatch/batch id
+;;    :equipment-asset/installed-at-iso "..."}
+;;
+;; An inbound/outbound lot proposal MAY ALSO carry an optional
+;; `:maintenance-notice` reference -- a DIFFERENT wire shape (a nested
+;; map, like `:handoff`) populated from a downstream isic-2813
+;; `:issue-maintenance-notice` event:
+;;
+;;   {:maintenance-notice/source-actor "cloud-itonami-isic-2813"
+;;    :maintenance-notice/dispatch-ref "JPN-PEQ-000000"
+;;    :maintenance-notice/equipment-asset-id "..."}                     ; == an :equipment-asset/id THIS actor may have registered
+;;
+;; This actor cross-checks the maintenance-notice's
+;; `:maintenance-notice/equipment-asset-id` against the equipment
+;; assets it has ALREADY registered (`equipment-asset-maintenance-
+;; notice-for-registered-asset?` below, wired into
+;; `coldchain.governor/equipment-asset-maintenance-notice-escalations`)
+;; -- when it matches, that is useful information worth a human
+;; glance ("the equipment that just received a maintenance notice is
+;; actually equipment we operate"), a SOFT escalation, never a hard
+;; hold, same reasoning as the grid-outage cross-check above.
+
+(defn equipment-asset-maintenance-notice-for-registered-asset?
+  "Positive-sense convenience predicate: does `maintenance-notice`'s
+  `:maintenance-notice/equipment-asset-id` name an equipment asset
+  THIS actor has already registered (any of `registered-ids`)? A
+  `nil`/non-map `maintenance-notice`, or one with no
+  `:maintenance-notice/equipment-asset-id`, is never a match (this
+  cross-check is entirely optional, same discipline as
+  `handoff-compatible-with-commodity-class?`)."
+  [maintenance-notice registered-ids]
+  (boolean
+   (and (map? maintenance-notice)
+        (some? (:maintenance-notice/equipment-asset-id maintenance-notice))
+        (contains? (set registered-ids) (:maintenance-notice/equipment-asset-id maintenance-notice)))))
