@@ -2,7 +2,7 @@
   "Pure kernel for cloud-itonami-jsic-4721's power-metering reconciliation
   -- the downstream half of the entirely optional, no-shared-code
   isic-3510 <-> jsic-4721 `:power-metering` cross-actor contract
-  (superproject ADR-2800001000). Same 'pure kernel behind a governor'
+  (superproject ADR-2800001100). Same 'pure kernel behind a governor'
   shape as `coldchain.kernels.concentration-verdict` -- no I/O, no
   store access.
 
