@@ -83,6 +83,47 @@
 ;;                                       ; grid-outage reference fields
 ;;                                       ; (below) already establish.
 
+;; ────── Outbound Handoff Issuance (jsic-4721 -> isic-5610/isic-4711/isic-4719) ──────
+;;
+;; The identical `:handoff` wire shape above is reused, unmodified, in the
+;; OTHER direction: `:log-outbound-shipment` proposals MAY carry a `:handoff`
+;; record THIS actor itself issues to a downstream food-service/retail actor
+;; (superproject ADR-2800000500) -- cloud-itonami-isic-5610 (community
+;; food-service operations, ~KFC-like), cloud-itonami-isic-4711 (community
+;; retail operations, ~Aeon-like supermarket), cloud-itonami-isic-4719
+;; (other non-specialized-store retail, ~Kura-Sushi-like). This is the
+;; direct-downstream fan-out side of the 2026-07 Nichirei case study (root
+;; cause #2: ~4-day outbound stoppage cascading to 15+ downstream client
+;; organizations) -- isic-1075 hands work IN to this warehouse, this
+;; warehouse hands work OUT to these three.
+;;
+;; No new field, no new shape -- only `:handoff/source-actor` differs:
+;;
+;;   {:handoff/id "..."
+;;    :handoff/source-actor "cloud-itonami-jsic-4721"   ; <- THIS actor, not isic-1075
+;;    :handoff/batch-id "..."                            ; this actor's own storage-lot/batch id
+;;    :handoff/product-type-id :coldchain/c3-chilled     ; this actor's own commodity-class id
+;;    :handoff/cold-chain-temp-min-c 2.0
+;;    :handoff/cold-chain-temp-max-c 10.0
+;;    :handoff/quantity-kg 120.5
+;;    :handoff/dispatched-at-iso "..."
+;;    :handoff/unspsc-code "50192701"    ; OPTIONAL, pass-through only, same as inbound
+;;    :handoff/gtin "0211075000011"}     ; OPTIONAL, pass-through only, same as inbound
+;;
+;; `lot-physical-violations` (below, via `coldchain.governor`) validates a
+;; self-issued outbound handoff with the EXACT SAME predicate
+;; (`handoff-compatible-with-commodity-class?`) it already uses for a
+;; received inbound one -- the check does not read `:handoff/source-actor`,
+;; so no new predicate is needed here. `coldchain.governor/outbound-
+;; concentration-violations` additionally reuses the capacity-concentration-
+;; limit kernel (unchanged, no new kernel code) against this same record's
+;; `:handoff/quantity-kg` -- see that function's own docstring and
+;; superproject ADR-2800000500 for the downstream-client-concentration
+;; rationale. Each of isic-5610/isic-4711/isic-4719 independently validates
+;; ITS OWN half of this contract against ITS OWN storage-temperature
+;; requirements (no shared code, no shared store, same asymmetric-optional
+;; design as every cross-actor reference in this file).
+
 (defn handoff-compatible-with-commodity-class?
   "Positive-sense convenience predicate: does the declared handoff's
   cold-chain-temp-min-c/max-c window OVERLAP `commodity`'s own

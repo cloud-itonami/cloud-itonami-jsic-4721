@@ -157,6 +157,59 @@
                                            :lot/quantity-kg 900
                                            :capacity/total-units 1000}))))))
 
+;; ── outbound-destination concentration limit (downstream client fan-out) ──
+;;
+;; Mirror-image of the inbound wiring above, superproject ADR-2800000500:
+;; reuses the SAME kernel, but reads the cross-actor :handoff/quantity-kg
+;; payload (not the pre-existing top-level :lot/quantity-kg the test just
+;; above this section confirms remains unchecked).
+
+(def ^:private downstream-outbound-handoff
+  "A handoff record THIS actor issues to a downstream retail/food-service
+  actor (e.g. cloud-itonami-isic-4711), :handoff/source-actor is jsic-4721
+  itself -- mirrors chilled-poultry-handoff's shape but the other
+  direction."
+  {:handoff/id "h-out-1"
+   :handoff/source-actor "cloud-itonami-jsic-4721"
+   :handoff/batch-id "lot-001"
+   :handoff/product-type-id :coldchain/c3-chilled
+   :handoff/cold-chain-temp-min-c 2.0
+   :handoff/cold-chain-temp-max-c 10.0
+   :handoff/quantity-kg 300
+   :handoff/dispatched-at-iso "2026-07-18T00:00:00Z"})
+
+(deftest outbound-shipment-handoff-quantity-exceeds-concentration-limit-holds
+  (testing "a single outbound handoff whose quantity-kg alone exceeds 25% of total capacity holds"
+    (let [r (governor/check {:kind :log-outbound-shipment
+                             :capacity/total-units 1000
+                             :handoff downstream-outbound-handoff})]
+      (is (= :hold (:status r)))
+      (is (some #(re-find #"concentration" %) (:reasons r))))))
+
+(deftest outbound-shipment-handoff-quantity-within-concentration-limit-passes
+  (is (= :pass (:status (governor/check {:kind :log-outbound-shipment
+                                         :capacity/total-units 1000
+                                         :handoff (assoc downstream-outbound-handoff
+                                                          :handoff/quantity-kg 100)})))))
+
+(deftest outbound-shipment-handoff-missing-total-units-does-not-hold-on-concentration-basis
+  (testing "a :handoff carrying :handoff/quantity-kg with no :capacity/total-units is not held on this basis"
+    (is (= :pass (:status (governor/check {:kind :log-outbound-shipment
+                                           :handoff downstream-outbound-handoff}))))))
+
+(deftest outbound-shipment-without-handoff-is-not-held-on-outbound-concentration-basis
+  (testing "no :handoff at all -- unaffected, same as before this wiring existed"
+    (is (= :pass (:status (governor/check {:kind :log-outbound-shipment
+                                           :capacity/total-units 1000}))))))
+
+(deftest outbound-shipment-handoff-issued-by-jsic-4721-itself-still-checked-for-cold-chain-compatibility
+  (testing "the pre-existing temperature-tier-overlap check applies identically whether jsic-4721 receives or issues the handoff"
+    (let [r (governor/check {:kind :log-outbound-shipment
+                             :lot/commodity-class :coldchain/f4-deep-frozen
+                             :handoff downstream-outbound-handoff})]
+      (is (= :hold (:status r)))
+      (is (some #(re-find #"handoff" %) (:reasons r))))))
+
 ;; ── cross-actor grid-outage reference (isic-3510 -> jsic-4721) ──
 ;;
 ;; SOFT escalation, not a hard hold -- mirrors cloud-itonami-isic-1075's

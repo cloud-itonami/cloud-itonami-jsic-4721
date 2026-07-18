@@ -66,6 +66,35 @@
   an ACTUALLY received quantity, not just a declared `:capacity/
   allocate` number, is checked against the limit.
 
+  The SAME kernel functions (`cv/concentration-ratio`/`cv/
+  concentration-limit-exceeded?`/`cv/default-concentration-limit` --
+  no new kernel code) are, symmetrically, also wired into
+  `:log-outbound-shipment` (see `outbound-concentration-violations`,
+  superproject ADR-2800000500) to flag the MIRROR-IMAGE concentration
+  risk on the downstream side: a single outbound `:handoff` whose
+  `:handoff/quantity-kg` alone represents more than `default-
+  concentration-limit` of this warehouse's `:capacity/total-units` in
+  ONE dispatch. Root cause #3 of ADR-2607176500 was Nichirei Logistics
+  Group's fan-out concentrating too much of ITS OWN capacity onto any
+  one client; this is the same single-point-of-failure shape viewed
+  from the opposite end of the pipe -- this warehouse concentrating
+  too much of a single dispatch onto any one downstream client (KFC-
+  like/Aeon-like/Kura-Sushi-like actors depending disproportionately
+  on this one 3PL for one shipment). Deliberately scoped identically
+  to the inbound wiring: a single-proposal ratio check, no tenant-
+  level cumulative outbound tracking (that would need a store-layer
+  schema extension -- explicitly out of scope, see ADR-2607177600's
+  own Consequences and ADR-2800000500). Optional on the SAME basis as
+  every other check here: a `:log-outbound-shipment` proposal without
+  a `:handoff` record, or one whose `:handoff` lacks `:handoff/
+  quantity-kg`, is never held on this basis -- and the PRE-EXISTING,
+  unrelated `:lot/quantity-kg` field (this actor's own self-reported
+  outbound quantity, unchanged, see `outbound-shipment-quantity-kg-is-
+  not-checked-against-concentration-limit`) still is not checked
+  against this limit -- only the cross-actor `:handoff/quantity-kg`
+  payload is, since that is the number that actually describes what
+  is being concentrated onto one named downstream recipient.
+
   ── Cross-actor handoff (isic-1075 -> jsic-4721) ──
 
   `:log-inbound-shipment`/`:log-outbound-shipment` proposals MAY carry
@@ -77,6 +106,27 @@
   must overlap the lot's assigned commodity class's storage band (see
   `lot-physical-violations` and `coldchain.facts/handoff-compatible-
   with-commodity-class?`).
+
+  ── Downstream handoff issuance (jsic-4721 -> isic-5610/isic-4711/isic-4719) ──
+
+  This actor is ALSO, symmetrically, the ISSUING side of the exact
+  SAME `:handoff` wire shape on outbound dispatch to downstream
+  food-service/retail actors (superproject ADR-2800000500) --
+  cloud-itonami-isic-5610 (community food-service operations, ~KFC),
+  cloud-itonami-isic-4711 (community retail operations, ~Aeon), and
+  cloud-itonami-isic-4719 (other non-specialized-store retail, ~Kura
+  Sushi) -- the direct-downstream fan-out the 2026-07 Nichirei
+  cold-storage cyber-incident case study's root cause #2 describes.
+  `:log-outbound-shipment` needed NO new field to carry this: the SAME
+  `:handoff` key `lot-physical-violations` already reads (above) works
+  in either direction -- only the record's own `:handoff/source-actor`
+  value differs (`\"cloud-itonami-jsic-4721\"` here, vs.
+  `\"cloud-itonami-isic-1075\"` on the inbound side), and this
+  governor's own temperature-tier-overlap check does not read that
+  field, so it validates a self-issued outbound handoff exactly as it
+  already validated a received inbound one. No new predicate, no new
+  reason string, no new dependency -- see
+  `coldchain.facts`'s own \"Outbound Handoff Issuance\" section.
 
   ── Cross-actor grid-outage reference (isic-3510 -> jsic-4721) ──
 
@@ -345,9 +395,41 @@
       [cv/reason-concentration-limit-exceeded]
       [])))
 
+(defn- outbound-concentration-violations
+  "Mirror-image wiring of `inbound-concentration-violations` into the
+  SAME capacity-concentration-limit kernel, but for the downstream/
+  outbound side (superproject ADR-2800000500): does a single
+  `:log-outbound-shipment` proposal's `:handoff` record's own
+  `:handoff/quantity-kg` (the cross-actor payload quantity handed to
+  ONE named downstream client -- e.g. cloud-itonami-isic-5610/-4711/
+  -4719) represent more than `cv/default-concentration-limit` of this
+  warehouse's `:capacity/total-units`? No new kernel logic -- reuses
+  `cv/concentration-ratio`/`cv/concentration-limit-exceeded?`/`cv/
+  default-concentration-limit` exactly as `inbound-concentration-
+  violations` does. Optional, same discipline as every other check in
+  this ns: a proposal with no `:handoff`, or a `:handoff` missing
+  `:handoff/quantity-kg`, or a proposal missing `:capacity/total-
+  units`, is never held on this basis. Deliberately reads `:handoff/
+  quantity-kg` (the cross-actor handed-off amount), NOT the pre-
+  existing top-level `:lot/quantity-kg` self-report that `:log-
+  outbound-shipment` already leaves unchecked against this limit (see
+  `outbound-shipment-quantity-kg-is-not-checked-against-concentration-
+  limit`) -- those are two different numbers for two different
+  purposes, and only the former describes downstream-client
+  concentration."
+  [proposal]
+  (let [handoff (:handoff proposal)
+        handoff-qty (:handoff/quantity-kg handoff)
+        total (:capacity/total-units proposal)
+        ratio (cv/concentration-ratio handoff-qty total)]
+    (if (= 1 (cv/concentration-limit-exceeded? ratio cv/default-concentration-limit))
+      [cv/reason-concentration-limit-exceeded]
+      [])))
+
 (defmethod rule :log-inbound-shipment [_ proposal]
   (into (lot-physical-violations proposal) (inbound-concentration-violations proposal)))
-(defmethod rule :log-outbound-shipment [_ proposal] (lot-physical-violations proposal))
+(defmethod rule :log-outbound-shipment [_ proposal]
+  (into (lot-physical-violations proposal) (outbound-concentration-violations proposal)))
 
 (defn- equipment-asset-required-fields-present?
   [proposal]
