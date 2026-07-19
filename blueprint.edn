@@ -9,4 +9,4 @@
  :itonami.blueprint/required-technologies [:identity :forms :audit-ledger :cae]
  :itonami.blueprint/optional-technologies [:telemetry]
  :itonami.blueprint/status :public-oss
- :itonami.blueprint/maturity :blueprint}
+ :itonami.blueprint/maturity :implemented}
