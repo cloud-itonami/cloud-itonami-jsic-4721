@@ -49,7 +49,7 @@
   equivalent) with the same proposal shape."
   (:require #?(:clj  [clojure.edn :as edn]
                :cljs [cljs.reader :as edn])
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [coldchain.facts :as facts]
             [coldchain.registry :as registry]
             [coldchain.store :as store]

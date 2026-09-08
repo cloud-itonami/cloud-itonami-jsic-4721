@@ -27,7 +27,7 @@
        kaisha/denrei/cacao/kotoba-ledger/bonsai/nekko/ipns/
        com-cloudflare/plm/product-party/unspsc/cloud-mamori/langgraph/
        langchain/... -- all `:local/root`) just to reuse ~200 lines of
-       pure kernel code that only needs `clojure.string`.
+       pure kernel code that only needs `kotoba.lang.text`.
     2. Layer mismatch — SecurityIncidentGovernor's 4 invariants
        (circuit-breaker/pii-precheck/disclosure-guard/bcp-precondition)
        are cloud-itonami PLATFORM-layer vocabulary
@@ -233,7 +233,7 @@
   establish. Existing `lot-physical-violations`/`grid-outage-
   duration-mismatch-escalations` are unchanged -- this is additive
   wiring alongside them, not a replacement."
-  (:require [coldchain.kernels.concentration-verdict :as cv]
+  (:require [kotoba.lang.text] [coldchain.kernels.concentration-verdict :as cv]
             [coldchain.kernels.power-metering-verdict :as pmv]
             [coldchain.facts :as facts]
             [coldchain.registry :as registry]))
