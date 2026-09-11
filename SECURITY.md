@@ -35,7 +35,7 @@ Security-critical concerns:
 
 All Governor changes must:
 - Have comprehensive test coverage (facts, registry, governor rules, kernels)
-- Pass `clojure -M:test` and `clojure -M:lint`
+- Pass `kbb -M:test` and `kbb -M:lint`
 - Include documentation of the cold-chain-safety rationale
 
 ## Dependencies

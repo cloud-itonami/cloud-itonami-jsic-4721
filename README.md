@@ -6,7 +6,7 @@ A distributed actor for autonomous, compliant coordination of refrigerated-wareh
 
 Paired with **cloud-itonami-isic-1075** (prepared meals and dishes manufacturing) to model the 2026-07 Nichirei cold-storage cyber-incident case study end to end: isic-1075 ~ Nichirei Foods (the manufacturer), this actor ~ **Nichirei Logistics Group** (the cold-chain 3PL whose ~4-day in/outbound stoppage and ~5,000-client fan-out were the root causes behind `cloud-itonami`'s `SecurityIncidentGovernor`, ADR-2607176500).
 
-**Maturity: `:implemented`** — ColdChainAdvisor ⊣ coldchain-governor as a langgraph-clj StateGraph (`intake → advise → govern → decide → commit/hold`, human-approval interrupt on the governor's own soft-escalation signals). All source `.cljc` (portable to JVM / ClojureScript / GraalVM), no JVM-only interop. `clojure -M:run` walks a scripted end-to-end scenario (`coldchain.sim`) through clean auto-commits, hard holds and escalate-then-human-approves round trips against every op in the governor's closed allowlist.
+**Maturity: `:implemented`** — ColdChainAdvisor ⊣ coldchain-governor as a langgraph-clj StateGraph (`intake → advise → govern → decide → commit/hold`, human-approval interrupt on the governor's own soft-escalation signals). All source `.cljc` (portable to JVM / ClojureScript / GraalVM), no JVM-only interop. `kbb -M:run` walks a scripted end-to-end scenario (`coldchain.sim`) through clean auto-commits, hard holds and escalate-then-human-approves round trips against every op in the governor's closed allowlist.
 
 ## Scope
 
@@ -51,13 +51,13 @@ Concretely: when this actor (or any physical-ops warehousing tenant) onboards to
 
 ```bash
 # Run full test suite
-clojure -M:test
+kbb -M:test
 
 # Check code quality
-clojure -M:lint
+kbb -M:lint
 
 # Run demo simulation
-clojure -M:run
+kbb -M:run
 ```
 
 ## Standalone Use
