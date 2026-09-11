@@ -8,7 +8,7 @@
   escalate-then-human-approves round trip, and several HARD holds that
   never reach a human).
 
-  For CLI: clojure -M:run
+  For CLI: kbb -M:run
 
   Walks:
     1. register-equipment-asset ea-1 (clean -- auto-commits)
