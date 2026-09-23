@@ -47,7 +47,7 @@
   the actor graph runs offline and the governor contract is exercised
   end-to-end. In production this calls a real LLM (kotoba-llm or
   equivalent) with the same proposal shape."
-  (:require #?(:clj  [clojure.edn :as edn]
+  (:require #?(:clj  [kotoba.lang.edn :as edn]
                :cljs [cljs.reader :as edn])
             [kotoba.lang.text :as str]
             [coldchain.facts :as facts]
