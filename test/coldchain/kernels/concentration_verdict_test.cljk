@@ -1,7 +1,7 @@
 (ns coldchain.kernels.concentration-verdict-test
   "1 test per pure predicate in concentration-verdict, same discipline
   as cloud-itonami.kernels.security-verdict-test."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [coldchain.kernels.concentration-verdict :as cv]))
 
 (deftest concentration-ratio-basic-arithmetic

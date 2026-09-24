@@ -1,5 +1,5 @@
 (ns coldchain.store-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [coldchain.store :as store]))
 
 (deftest tenant-registration-round-trip

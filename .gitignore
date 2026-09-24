@@ -8,3 +8,4 @@
 target/
 .cider-ns-history
 .calva/
+.nbb/
