@@ -1,5 +1,5 @@
 (ns coldchain.operation-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [coldchain.operation :as operation]
             [coldchain.governor :as governor]))
 

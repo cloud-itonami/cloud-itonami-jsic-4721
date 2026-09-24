@@ -1,5 +1,5 @@
 (ns coldchain.registry-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [coldchain.registry :as registry]))
 
 (deftest storage-temp-out-of-range-detects-both-directions

@@ -9,7 +9,7 @@
   (`cloud-itonami.security-governor-test/tenant-onboard-for-a-
   physical-ops-jsic-requires-a-manual-fallback-ref`), not here -- this
   repo has no code path that calls cloud-itonami at all."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [coldchain.governor :as governor]))
 
 ;; ── closed allowlist ──

@@ -1,5 +1,5 @@
 (ns coldchain.facts-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [coldchain.facts :as facts]))
 
 (deftest commodity-class-by-id-known-classes

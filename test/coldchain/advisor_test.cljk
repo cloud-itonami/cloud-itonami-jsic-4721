@@ -7,7 +7,7 @@
   fabricates a reading, and `:reconcile-power-metering`'s
   `:equipment-assets` list is pulled from the STORE, never trusted off
   the request."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [coldchain.advisor :as advisor]
             [coldchain.store :as store]
             [coldchain.kernels.power-metering-verdict :as pmv]))
