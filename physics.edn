@@ -1,0 +1,45 @@
+;; What this vertical's robot physically does, declared for
+;; kotoba.robotics.process (kotoba-lang/robotics). `kbb -M:dev:physics` runs it.
+;;
+;; README has no "Robotics premise" section: the actor coordinates a
+;; refrigerated warehouse (inbound receiving -> cold-chain custody ->
+;; outbound staging) and is explicitly not equipment control. The physical
+;; work it coordinates, and that a cold-store robot does, is declared here:
+;; a pallet AGV braking on a frosted freezer floor, a case-picking arm
+;; depalletising cartons, and a frozen carton warming while it waits on the
+;; outbound dock (the cold-chain excursion the storage-lot checks judge).
+;;
+;; Every number without a cited source is marked `estimate` in its :basis.
+;; Replacing an estimate with a sourced value is this bot's growth work.
+{:physics/schema "itonami.physical-ai.spec.v1"
+ :repo "cloud-itonami/cloud-itonami-jsic-4721"
+ :cases
+ [{:id :freezer-pallet-agv-stop
+   :kind :transport
+   :procedure "pallet AGV carries an 800 kg pallet of frozen goods 60 m into the freezer aisle and stops at the rack end; frost limits how hard it can brake"
+   :params {:mass-kg 1200.0 :payload-kg 800.0 :distance-m 60.0 :v-max-mps 1.5 :a-max-mps2 0.4
+            :drive-force-n 2500.0 :crr 0.01 :cog-height-m 0.60 :payload-cog-height-m 0.90
+            :support-half-length-m 0.60 :max-time-s 600.0}
+   :sweep {:param :brake-decel-mps2 :values [0.5 0.75 1.0 1.5 2.0 3.0]}
+   :quantity :stopping-distance-m
+   :limit {:max 1.0 :basis "estimate: stop inside the 1 m clearance between the detection field and the rack end at full aisle speed"}
+   :boundary {:lo 0.3 :hi 5.0}}
+  {:id :carton-depalletise
+   :kind :manipulator
+   :procedure "case-picking arm lifts a frozen carton off the pallet top layer onto the outbound conveyor"
+   :params {:l1-m 0.90 :l2-m 0.80 :m1-kg 20.0 :m2-kg 12.0
+            :from [1.10 0.20] :to [0.50 1.20] :duration-s 2.5 :steps 500}
+   :sweep {:param :payload-kg :values [5.0 10.0 15.0 20.0 25.0]}
+   :quantity :peak-tau1-nm
+   :limit {:max 450.0 :basis "estimate: continuous shoulder torque of a 20-25 kg-payload palletising arm"}
+   :boundary {:lo 1.0 :hi 60.0}}
+  {:id :frozen-carton-dock-dwell
+   :kind :thermal
+   :procedure "8 cm retail case of frozen goods (-25 C) waits by the open outbound dock door; heat from the moving dock air reaches its mid-plane (half thickness, symmetric)"
+   :params {:thickness-m 0.04 :conductivity-w-mk 1.5 :density-kg-m3 1000.0 :specific-heat-j-kgk 2000.0
+            :t0-c -25.0 :h-front-w-m2k 15.0 :h-back-w-m2k 0.0 :t-back-ambient-c -25.0
+            :threshold-c -18.0 :duration-s 14400.0 :nodes 11}
+   :sweep {:param :t-hot-c :values [-15.0 -10.0 -5.0 0.0 10.0 20.0]}
+   :quantity :time-to-threshold-s
+   :limit {:min 3600.0 :basis "estimate: the product core must stay at or below -18 C through a one-hour dock staging window; the solver has no latent heat, so this is conservative (warms faster than real food)"}
+   :boundary {:lo -17.0 :hi 30.0}}]}
