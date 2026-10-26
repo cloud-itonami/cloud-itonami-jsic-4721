@@ -58,7 +58,7 @@
   :physai-test {:extra-paths ["test" "test-physai"] :main-opts ["-m" "cognitect.test-runner"]}
 :dev {:override-deps
         {io.github.kotoba-lang/langchain
-         {:local/root "../../kotoba-lang/langchain"}}}
+        {:local/root "../../kotoba-lang/kotoba/lib/kotoba.langchain"}}}
   :run {:main-opts ["-m" "coldchain.sim"]}
   :test {:extra-paths ["test"]
          :extra-deps {io.github.cognitect-labs/test-runner
